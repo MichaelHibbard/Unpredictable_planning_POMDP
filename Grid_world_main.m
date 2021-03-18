@@ -2,7 +2,6 @@ clear all
 clc
 
 % Construct a Gridworld with an observation function.
-
 stringindicator = 9000;
 
 % parameters
@@ -54,7 +53,8 @@ end
 % Initialize some stuff for removing unreachable states
 target_product = zeros(num_memory_states*length(target),1);
 absorb_product = zeros(num_memory_states*length(absorb),1);
-% essentially, for each state on the product that has a target state on the
+
+% Essentially, for each state on the product that has a target state on the
 % MDP, set that state to be a target (and same for absorbing states)
 for k = 1:length(target)
     target_product(num_memory_states*(k-1)+1:num_memory_states*k) = (0:num_memory_states-1)*num_states+target(k);
@@ -69,7 +69,7 @@ if num_memory_states > 1
     P_nominal = P_product;
     [reachable,~] = find_reachable(P_product,init);
     unreachable = sort(setdiff(1:size(P_product,1),reachable),'descend');
-    disp(unreachable)
+    %disp(unreachable)
     
     P_Product(unreachable,:,:) = [];    % states transitioning from
     P_Product(:,unreachable,:) = [];    % states transitioning to
@@ -81,7 +81,7 @@ if num_memory_states > 1
     absorb_original = absorb_product;
     target_original = target_product;
     
-    % Get indices for unreachable and absorbing states?
+    % Get indices for unreachable and absorbing states
     for k=1:length(target_product)
         num_smaller_states=unreachable(unreachable<target_product(k));
         target_product(k)=target_product(k)-length(num_smaller_states);
@@ -95,7 +95,6 @@ if num_memory_states > 1
     
     num_smaller_states=unreachable(unreachable<init);
     init_reduced=init-length(num_smaller_states);
-    disp('found bitch')
     disp(init_reduced)
 else
     P_nominal = P_product;

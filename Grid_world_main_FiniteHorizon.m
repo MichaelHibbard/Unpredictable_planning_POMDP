@@ -3,7 +3,9 @@ clc
 
 costLowerBound = 0.9;
 stringIndicator = 22;
+
 tHorizon = 18;
+
 % Construct a Gridworld with an observation function and finite time horizon.
 % tHorizon = 20;
 
@@ -11,19 +13,18 @@ tHorizon = 18;
 discount = 1;
 
 % parameters for the state space
-row = 4;                % rows in the gridworld
-column = 4;             % columns in the gridworld
-numStatesNominal = row*column;  % Number of states in the original MDP
-numMemoryStates = 1;  % Memory states in the FSC
-act = 4;                % Number of available actions - up, down, left, right
-wall = [];              % walls - not absorbing but cannot transition through these
-absorb = [[1,4];[4,1];[4,4]]; % states that can only transition to themselves
-prob = 0.95;            % probability of successfully transitioning to desired state
-eps = 0.005;                % probability of slipping backwards (required for finite entropy)
-init = 1;               % initial state in the POMDP
-target = [16];            % target state in the POMDP
-targetLoc = [[4,4]];      % For simplicty making the observation function
-%
+row = 4;                                    % rows in the gridworld
+column = 4;                                 % columns in the gridworld
+numStatesNominal = row*column;              % Number of states in the original MDP
+numMemoryStates = 1;                        % Memory states in the FSC
+act = 4;                                    % Number of available actions - up, down, left, right
+wall = [];                                  % walls - not absorbing but cannot transition through these
+absorb = [[1,4];[4,1];[4,4]];               % states that can only transition to themselves
+prob = 0.95;                                % probability of successfully transitioning to desired state
+eps = 0.005;                                % probability of slipping backwards (required for finite entropy)
+init = 1;                                   % initial state in the POMDP
+target = [16];                              % target state in the POMDP
+targetLoc = [[4,4]];                        % For simplicty making the observation function
 
 % Construct the transition probability matrix for the gridworld
 pMatrix = grid_world2(row,column,act,wall,absorb,prob,eps,tHorizon);
@@ -111,7 +112,6 @@ end
 
 numSmallerStates=unreachable(unreachable<init);
 initReduced=init-length(numSmallerStates);
-disp('found bitch')
 disp(initReduced)
 % else
 %     pNominal = pProduct;
