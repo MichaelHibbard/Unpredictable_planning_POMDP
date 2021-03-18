@@ -10,6 +10,8 @@ num_obs=size(obsFunction,2);    % number of observations
 cvx_solver MOSEK
 cvx_begin quiet
 
+% Quick change line to push, verify on branch
+
 % Define variables using REACHABLE STATES in the PRODUCT!!
 variables lambda(num_memory,num_actions,num_obs) eta(num_states) V(num_states) slack_2(num_states) slack_1(num_states)
 memory_node=1; % counter for memory states
