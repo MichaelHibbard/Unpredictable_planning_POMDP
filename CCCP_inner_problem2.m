@@ -1,4 +1,4 @@
-randfunction [lambda,eta,V,slack_2,slack_1,cvx_optval]=CCCP_inner_problem2(tau,init_lambda,init_V,init_eta,TF,TF_reduced,absorb,absorb_product,target,target_product,init,init_reduced,unreachable,num_memory,cost,cost_bound,obsFunction,discount)
+function [lambda,eta,V,slack_2,slack_1,cvx_optval]=CCCP_inner_problem2(tau,init_lambda,init_V,init_eta,TF,TF_reduced,absorb,absorb_product,target,target_product,init,init_reduced,unreachable,num_memory,cost,cost_bound,obsFunction,discount)
 % We will use reduced transition function to define optimization variables.
 % To keep track of what is reachable and what is not, we use both reduced
 % and full transition matrices.
@@ -9,17 +9,20 @@ num_actions=size(TF_reduced,3); % number of actions
 num_obs=size(obsFunction,2);    % number of observations
 cvx_solver MOSEK
 cvx_begin quiet
+
 % Define variables using REACHABLE STATES in the PRODUCT!!
 variables lambda(num_memory,num_actions,num_obs) eta(num_states) V(num_states) slack_2(num_states) slack_1(num_states)
 memory_node=1; % counter for memory states
 state_counter=1; % counter for reachable states
 
-disp(num_nominal_states)
-disp(num_states)
-disp(num_obs)
+% disp(num_nominal_states)
+% disp(num_states)
+% disp(num_obs)
 
 for s=1:size(TF,1) % To keep track of memory shifts, we use original TF
+    
     if ~ismember(s,unreachable) % if the state is unreachable, skip. % dont forget to increase state counter for each reachable state
+        
         % REMEMBER that the rest of the code will run if s is reachable!!!!
         if ismember(s,absorb) % if the state is absorbing but not target do the following
             % set everything to zero and increase the state
@@ -97,6 +100,7 @@ for s=1:size(TF,1) % To keep track of memory shifts, we use original TF
                             end
                         end
                     end
+                    
                     % add P(s,s') to entropy vector
                     entr_vec=[entr_vec, P_s_succ];
                     act=0;
@@ -174,7 +178,7 @@ V>=0;
 % eta(init_reduced)<=cost_bound;
 maximize(V(init_reduced)-tau*(sum(slack_1)+sum(slack_2)));
 cvx_end
-disp(slack_2)
+%disp(slack_2)
 disp(val)
 %disp('Value')
 %disp(eta(init))
