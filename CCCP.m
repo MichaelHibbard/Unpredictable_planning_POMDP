@@ -1,4 +1,4 @@
-%%%% Convex concave procedure
+%%%% Convex concave procedure for unpredictable planning under partial observability
 % Inputs:
 
 % init_lambda: initial values for FSCs action selection function. For a
