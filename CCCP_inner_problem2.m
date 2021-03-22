@@ -10,8 +10,6 @@ num_obs=size(obsFunction,2);    % number of observations
 cvx_solver MOSEK
 cvx_begin quiet
 
-% Quick change line to push, verify on branch
-
 % Define variables using REACHABLE STATES in the PRODUCT!!
 variables lambda(num_memory,num_actions,num_obs) eta(num_states) V(num_states) slack_2(num_states) slack_1(num_states)
 memory_node=1; % counter for memory states
@@ -21,119 +19,97 @@ state_counter=1; % counter for reachable states
 % disp(num_states)
 % disp(num_obs)
 
+tic;
+
+state_counter_absorb_list = [];
+state_counter_target_list = [];
+P_sspr_list = [];
+
 for s=1:size(TF,1) % To keep track of memory shifts, we use original TF
     
-    if ~ismember(s,unreachable) % if the state is unreachable, skip. % dont forget to increase state counter for each reachable state
+    % if the state is unreachable, skip. 
+    % dont forget to increase state counter for each reachable state
+    if ~ismember(s,unreachable) 
         
         % REMEMBER that the rest of the code will run if s is reachable!!!!
         if ismember(s,absorb) % if the state is absorbing but not target do the following
-            % set everything to zero and increase the state
-            % counter since you have counted one more reachable
-            % state
-            slack_2(state_counter)==0;
-            slack_1(state_counter)==0;
-            eta(state_counter)==0;
-            V(state_counter)==0;
+            
+            % Save to list, but can do all of these at once later on.
+            state_counter_absorb_list = [state_counter_absorb_list, state_counter];
             state_counter=state_counter+1;
             
         elseif ismember(s,target) % if the state s is target state
-            slack_2(state_counter)==0;
-            slack_1(state_counter)==0;
-            eta(state_counter)==1; % set its reachability value to 1 !!
-            V(state_counter)==0;
+            
+            state_counter_target_list = [state_counter_target_list, state_counter];
             state_counter=state_counter+1; % increase the counter
             
         else   % For all other reachable states do the following
+            
+            oo = find(obsFunction(state_counter,:));    % Non-zero observations are constant for a fixed state.
             successors=find(sum(TF_reduced(state_counter,:,:),3)); % find successor states
-            stack_cons_reach=0; % we will add all reachability constraints to this stack
-            stack_cons_entr=0; % we will add all entropy constraints to this stack
-            target_successor_stack=0; % if the successor is target state, we will use this stack
-            entr_vec=[];
-            for succ=successors % for each successor state do the following
-                P_s_succ=0;
-                P_s_succ_init=0;
-                target_successor=0;
-                absorb_successor=0;
-                if ismember(succ,target_product) % if the successor is a reachable target state
-                    for obs=1:num_obs
-                        if obsFunction(state_counter,obs)~=0
-                            for aa=1:num_actions % for each actions of the state
-                                if TF_reduced(state_counter,succ,aa)~=0 % find the action that transitions to the target state
-                                    % add the value P(s,a,s')lambda(q,a) to the reachability probability
-                                    target_successor=target_successor+lambda(memory_node,aa,obs)*obsFunction(state_counter,obs)*TF_reduced(state_counter,succ,aa);
-                                end
-                            end
-                        end
-                    end
-                    target_successor_stack=target_successor_stack+target_successor; % if there are other target successors, keep adding up.
-                    % remember local entropy= \sum_s'
-                    % (P(s,s')log P(s,s')). We find each
-                    % P(s,s') and then keep them in an array to
-                    % calculate the entropy of the array later
-                    entr_vec=[entr_vec, target_successor];
-                    
-                    % If the successor is absorbing, we dont
-                    % care about reachability constraint (since the reach value of absorbing is 0 !) but
-                    % care about the entropy, i.e., P(s,s') value.
-                elseif ismember(succ,absorb_product)
-                    for obs=1:num_obs
-                        if obsFunction(state_counter,obs)~=0
-                            for aa=1:num_actions
-                                if TF_reduced(state_counter,succ,aa)~=0
-                                    absorb_successor=absorb_successor+lambda(memory_node,aa,obs)*obsFunction(state_counter,obs)*TF_reduced(state_counter,succ,aa);
-                                end
-                            end
-                        end
-                    end
-                    % Add P(s,s') to the entropy array
-                    entr_vec=[entr_vec, absorb_successor];
-                
-                else % if the successor state is neither absorbing nor target, then do the following
-                    
-                    for obs=1:num_obs
-                        if obsFunction(state_counter,obs) ~= 0
-                            for act=1:num_actions
-                                if TF_reduced(state_counter,succ,act)~=0  % if the transition probability is not zero
-                                    % find P(s,s') by summing up over all actions
-                                    P_s_succ=P_s_succ+lambda(memory_node,act,obs)*obsFunction(state_counter,obs)*TF_reduced(state_counter,succ,act);
-                                    % Find P(s,s') using the initial lambda values around which we perform the linearization.
-                                    P_s_succ_init=P_s_succ_init+init_lambda(memory_node,act,obs)*obsFunction(state_counter,obs)*TF_reduced(state_counter,succ,act);
-                                end
-                            end
-                        end
-                    end
-                    
-                    % add P(s,s') to entropy vector
-                    entr_vec=[entr_vec, P_s_succ];
-                    act=0;
-                    
-                    % Now we find convex and concave parts of the P(s,a,s')lambda(q,a)eta(s). Note that both lambda(s,a) and eta(s) are variables.
-                    % write the term as difference of convex functions f_1(x)-f_2(x). Then linearize the concave part where we use initial values around which the linearization is performed !!
-                    convex_part=0.5*square(P_s_succ-eta(succ));
-                    concave_part=0.5*P_s_succ_init*P_s_succ_init-P_s_succ_init*P_s_succ+0.5*init_eta(succ)*init_eta(succ)-eta(succ)*init_eta(succ);
-                    stack_cons_reach=stack_cons_reach+convex_part+concave_part;
-                    
-                    % do the same difference of convex stuff
-                    % for P(s,a,s')lambda(s,a)eta(s).
-                    convex_part_entropy=0.5*square(P_s_succ-V(succ));
-                    concave_part_entropy=0.5*P_s_succ_init*P_s_succ_init-P_s_succ_init*P_s_succ+0.5*init_V(succ)*init_V(succ)-V(succ)*init_V(succ);
-                    stack_cons_entr=stack_cons_entr+convex_part_entropy+concave_part_entropy;
-                    
-                end
-
+            
+            % stack_cons_reach=0; % we will add all reachability constraints to this stack
+            % stack_cons_entr=0; % we will add all entropy constraints to this stack
+            % target_successor_stack=0; % if the successor is target state, we will use this stack
+            
+            % Group the successor states into their associated type
+            target_succs = intersect(successors,target_product);
+            absorb_succs = intersect(successors,absorb_product);
+            gen_succs = setdiff(successors,union(target_succs,absorb_succs));
+            
+            % NOTE: I BELIEVE THAT MORE CARE MUST BE TAKEN IF OBSERVATIONS
+            % ARE NOT DETERMINISTIC
+            
+            % Target states
+            if length(target_succs) == 1 
+                target_successors = squeeze(obsFunction(state_counter,oo))*squeeze(lambda(memory_node,:,oo))*squeeze(TF_reduced(state_counter,target_succs,:));
+                target_successor_stack = sum(target_successors);
+            elseif length(target_succs) > 1
+                target_successors = squeeze(obsFunction(state_counter,oo))*squeeze(lambda(memory_node,:,oo))*(squeeze(TF_reduced(state_counter,target_succs,:))');
+                target_successor_stack = sum(target_successors);
+            else
+                target_successors = [];
+                target_successor_stack = 0;
             end
+            
+            % Absorbing states
+            if length(absorb_succs) == 1
+                absorb_successors = squeeze(obsFunction(state_counter,oo))*(squeeze(lambda(memory_node,:,oo)))*squeeze(TF_reduced(state_counter,absorb_succs,:));
+            elseif length(absorb_succs) > 1
+                absorb_successors = squeeze(obsFunction(state_counter,oo))*(squeeze(lambda(memory_node,:,oo)))*(squeeze(TF_reduced(state_counter,absorb_succs,:))');
+            else
+                absorb_successors = [];
+            end
+            
+            if ~isempty(gen_succs)
+                % find P(s,s') by summing up over all actions
+                P_s_succ = squeeze(obsFunction(state_counter,oo))*(squeeze(lambda(memory_node,:,oo)))*squeeze(TF_reduced(state_counter,gen_succs,:))';
+                % Find P(s,s') using the initial lambda values around which we perform the linearization.
+                P_s_succ_init = squeeze(obsFunction(state_counter,oo))*(squeeze(init_lambda(memory_node,:,oo)))*squeeze(TF_reduced(state_counter,gen_succs,:))';
+                
+                % Now we find convex and concave parts of the P(s,a,s')lambda(q,a)eta(s). Note that both lambda(s,a) and eta(s) are variables.
+                % write the term as difference of convex functions f_1(x)-f_2(x). Then linearize the concave part where we use initial values around which the linearization is performed !!
+                convex_part=0.5*square(P_s_succ'-eta(gen_succs));
+                concave_part=0.5*P_s_succ_init'.*P_s_succ_init'-P_s_succ_init'.*P_s_succ'+0.5*init_eta(gen_succs).*init_eta(gen_succs)-eta(gen_succs).*init_eta(gen_succs);
+                stack_cons_reach = sum(convex_part) + sum(concave_part);
+
+                % Repeat difference-of-convex process
+                % for P(s,a,s')lambda(s,a)eta(s).
+                convex_part_entropy = 0.5*square(P_s_succ'-V(gen_succs));
+                concave_part_entropy = 0.5*P_s_succ_init'.*P_s_succ_init'-P_s_succ_init'.*P_s_succ'+0.5*init_V(gen_succs).*init_V(gen_succs)-V(gen_succs).*init_V(gen_succs);
+                stack_cons_entr = sum(convex_part_entropy) + sum(concave_part_entropy);
+            else
+                P_s_succ = [];
+                stack_cons_reach = 0;
+                stack_cons_entr = 0;
+            end
+            
+            % add P(s,s') to entropy vector
+            entr_vec = [target_successors, absorb_successors, P_s_succ];
             
             % Encode that state transitions must be feasible probability
             % distributions. P_ss' = P_sspr
-            P_sspr = 0;
-            for succ=successors
-                for obs=1:num_obs
-                    for action=1:num_actions
-                        P_sspr = P_sspr + lambda(memory_node,action,obs)*obsFunction(state_counter,obs)*TF_reduced(state_counter,succ,action);
-                    end
-                end
-            end
-            P_sspr == 1;
+            P_sspr_list = [P_sspr_list, sum(obsFunction(state_counter,:)*(squeeze(lambda(memory_node,:,:))')*(squeeze(TF_reduced(state_counter,successors,:))'))];
             
             % Reachability constraint eta(s)<= \sum_s' P(s,s')eta (s')
             % where P(s,s')=\sum_a P(s,a',s')lambda(q,a)
@@ -156,13 +132,19 @@ for s=1:size(TF,1) % To keep track of memory shifts, we use original TF
     
 end
 
-% Explicity write this in terms of underlying variables.
-%             for k=1:num_memory
-%                 sum(lambda(k,:))==1;
-%             end
+% Constrain that transitions must be valid probability distributions
+P_sspr_list == 1;
 
-% Explicitly write this in terms of underlying variables. Don't
-% need to?
+% Constraints shared by absorbing and target states
+slack_2([state_counter_absorb_list,state_counter_target_list])==0;
+slack_1([state_counter_absorb_list,state_counter_target_list])==0;
+V([state_counter_absorb_list,state_counter_target_list])==0;
+
+% Reach constraints different for absorbing / target
+eta(state_counter_absorb_list)==0;
+eta(state_counter_target_list)==1;
+
+% Explicitly write this in terms of underlying variables.
 lambda>=1e-5;
 
 eta>=0;
@@ -185,4 +167,8 @@ disp(val)
 %disp('Value')
 %disp(eta(init))
 %  disp(dot(lambda(2,:),cost(4,:)));
+
+toc;
+disp(toc-tic)
+
 end
