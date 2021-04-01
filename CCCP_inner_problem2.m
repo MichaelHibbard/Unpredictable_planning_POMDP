@@ -27,26 +27,26 @@ P_sspr_list = [];
 
 for s=1:size(TF,1) % To keep track of memory shifts, we use original TF
     
-    % if the state is unreachable, skip. 
+    % if the state is unreachable, skip.
     % dont forget to increase state counter for each reachable state
-    if ~ismember(s,unreachable) 
+    if ~ismember(s,unreachable)
         
         % REMEMBER that the rest of the code will run if s is reachable!!!!
-        if ismember(s,absorb) % if the state is absorbing but not target do the following
+        if ismember(s,target) % if the state s is target state
+            
+            state_counter_target_list = [state_counter_target_list, state_counter];
+            state_counter=state_counter+1; % increase the counter
+            
+        elseif ismember(s,absorb) % if the state is absorbing but not target do the following
             
             % Save to list, but can do all of these at once later on.
             state_counter_absorb_list = [state_counter_absorb_list, state_counter];
             state_counter=state_counter+1;
             
-        elseif ismember(s,target) % if the state s is target state
-            
-            state_counter_target_list = [state_counter_target_list, state_counter];
-            state_counter=state_counter+1; % increase the counter
-            
         else   % For all other reachable states do the following
             
             oo = find(obsFunction(state_counter,:));    % Non-zero observations are constant for a fixed state.
-            successors=find(sum(TF_reduced(state_counter,:,:),3)); % find successor states
+            successors=find(sum(TF_reduced(state_counter,:,:),3)); % find successor states for a fixed state
             
             % stack_cons_reach=0; % we will add all reachability constraints to this stack
             % stack_cons_entr=0; % we will add all entropy constraints to this stack
@@ -54,18 +54,23 @@ for s=1:size(TF,1) % To keep track of memory shifts, we use original TF
             
             % Group the successor states into their associated type
             target_succs = intersect(successors,target_product);
-            absorb_succs = intersect(successors,absorb_product);
+            absorb_succs = setdiff(intersect(successors,absorb_product),target_succs); % Target states are also absorbing - need to be careful!
             gen_succs = setdiff(successors,union(target_succs,absorb_succs));
+            
+            % May not be necessary but want to be sure of its shape
+            obs_vector = reshape(obsFunction(state_counter,oo),1,length(oo));
+            lambda_matrix = reshape(lambda(memory_node,:,oo),num_actions,length(oo));
+            init_lambda_matrix = reshape(init_lambda(memory_node,:,oo),num_actions,length(oo));
+            target_matrix = reshape(TF_reduced(state_counter,target_succs,:),length(target_succs),num_actions);
+            absorb_matrix = reshape(TF_reduced(state_counter,absorb_succs,:),length(absorb_succs),num_actions);
+            gen_matrix = reshape(TF_reduced(state_counter,gen_succs,:),length(gen_succs),num_actions);
             
             % NOTE: I BELIEVE THAT MORE CARE MUST BE TAKEN IF OBSERVATIONS
             % ARE NOT DETERMINISTIC
             
             % Target states
-            if length(target_succs) == 1 
-                target_successors = squeeze(obsFunction(state_counter,oo))*squeeze(lambda(memory_node,:,oo))*squeeze(TF_reduced(state_counter,target_succs,:));
-                target_successor_stack = sum(target_successors);
-            elseif length(target_succs) > 1
-                target_successors = squeeze(obsFunction(state_counter,oo))*squeeze(lambda(memory_node,:,oo))*(squeeze(TF_reduced(state_counter,target_succs,:))');
+            if length(target_succs) >= 1
+                target_successors = obs_vector*lambda_matrix'*target_matrix';
                 target_successor_stack = sum(target_successors);
             else
                 target_successors = [];
@@ -73,35 +78,68 @@ for s=1:size(TF,1) % To keep track of memory shifts, we use original TF
             end
             
             % Absorbing states
-            if length(absorb_succs) == 1
-                absorb_successors = squeeze(obsFunction(state_counter,oo))*(squeeze(lambda(memory_node,:,oo)))*squeeze(TF_reduced(state_counter,absorb_succs,:));
-            elseif length(absorb_succs) > 1
-                absorb_successors = squeeze(obsFunction(state_counter,oo))*(squeeze(lambda(memory_node,:,oo)))*(squeeze(TF_reduced(state_counter,absorb_succs,:))');
+            if length(absorb_succs) >= 1
+                absorb_successors = obs_vector*lambda_matrix'*absorb_matrix';
             else
                 absorb_successors = [];
             end
             
-            if ~isempty(gen_succs)
-                % find P(s,s') by summing up over all actions
-                P_s_succ = squeeze(obsFunction(state_counter,oo))*(squeeze(lambda(memory_node,:,oo)))*squeeze(TF_reduced(state_counter,gen_succs,:))';
-                % Find P(s,s') using the initial lambda values around which we perform the linearization.
-                P_s_succ_init = squeeze(obsFunction(state_counter,oo))*(squeeze(init_lambda(memory_node,:,oo)))*squeeze(TF_reduced(state_counter,gen_succs,:))';
+            % General successor states
+            if length(gen_succs) >= 1
                 
-                % Now we find convex and concave parts of the P(s,a,s')lambda(q,a)eta(s). Note that both lambda(s,a) and eta(s) are variables.
-                % write the term as difference of convex functions f_1(x)-f_2(x). Then linearize the concave part where we use initial values around which the linearization is performed !!
-                convex_part=0.5*square(P_s_succ'-eta(gen_succs));
-                concave_part=0.5*P_s_succ_init'.*P_s_succ_init'-P_s_succ_init'.*P_s_succ'+0.5*init_eta(gen_succs).*init_eta(gen_succs)-eta(gen_succs).*init_eta(gen_succs);
-                stack_cons_reach = sum(convex_part) + sum(concave_part);
-
-                % Repeat difference-of-convex process
-                % for P(s,a,s')lambda(s,a)eta(s).
-                convex_part_entropy = 0.5*square(P_s_succ'-V(gen_succs));
-                concave_part_entropy = 0.5*P_s_succ_init'.*P_s_succ_init'-P_s_succ_init'.*P_s_succ'+0.5*init_V(gen_succs).*init_V(gen_succs)-V(gen_succs).*init_V(gen_succs);
-                stack_cons_entr = sum(convex_part_entropy) + sum(concave_part_entropy);
+                % First, we need to construct the stacks of variables. Can
+                % loop through here (should be efficient, simply appending
+                % to lists, not performing any CVX operations)
+                c_stack = [];
+                lam_stack = [];
+                lam_init_stack = [];
+                reach_stack = [];
+                reach_init_stack = [];
+                entr_stack = [];
+                entr_init_stack = [];
+                for succ = gen_succs
+                    c_stack_cur = (1/2)*discount*reshape(TF_reduced(state_counter,succ,:),num_actions,1);
+                    c_stack = [c_stack;c_stack_cur];
+                    lam_stack_cur = reshape(lambda(memory_node,:,oo),num_actions,1);
+                    lam_stack = [lam_stack;lam_stack_cur];
+                    lam_init_stack_cur = reshape(init_lambda(memory_node,:,oo),num_actions,1);
+                    lam_init_stack = [lam_init_stack;lam_init_stack_cur];
+                    reach_stack_cur = repmat(eta(succ),num_actions,1);
+                    reach_stack = [reach_stack;reach_stack_cur];
+                    reach_init_stack_cur = repmat(init_eta(succ),num_actions,1);
+                    reach_init_stack = [reach_init_stack;reach_init_stack_cur];
+                    entr_stack_cur = repmat(V(succ),num_actions,1);
+                    entr_stack = [entr_stack;entr_stack_cur];
+                    entr_init_stack_cur = repmat(init_V(succ),num_actions,1);
+                    entr_init_stack = [entr_init_stack;entr_init_stack_cur];
+                end
+                
+                %                 convexified_entropy_stack = c_stack.*(entr_init_stack + lam_init_stack).^2 ...
+                %                                         - c_stack.*(entr_stack.^2 + lam_stack.^2) ...
+                %                                         + 2*c_stack.*(entr_init_stack + lam_init_stack).*(entr_stack - entr_init_stack) ...
+                %                                         + 2*c_stack.*(entr_init_stack + lam_init_stack).*(lam_stack - lam_init_stack);
+                %                 convexified_reach_stack = c_stack.*(reach_init_stack + lam_init_stack).^2 ...
+                %                                         - c_stack.*(reach_stack.^2 + lam_stack.^2) ...
+                %                                         + 2*c_stack.*(reach_init_stack + lam_init_stack).*(reach_stack - reach_init_stack) ...
+                %                                         + 2*c_stack.*(reach_init_stack + lam_init_stack).*(lam_stack - lam_init_stack);
+                convexified_entropy_stack = c_stack.*(entr_init_stack + lam_init_stack).^2 ...
+                    - sum_square((c_stack.^(1/2)).*entr_stack) - sum_square((c_stack.^(1/2)).*lam_stack) ...
+                    + 2*c_stack.*(entr_init_stack + lam_init_stack).*(entr_stack - entr_init_stack) ...
+                    + 2*c_stack.*(entr_init_stack + lam_init_stack).*(lam_stack - lam_init_stack);
+                convexified_reach_stack = sum(c_stack.*(reach_init_stack + lam_init_stack).^2) ...
+                    - sum_square((c_stack.^(1/2)).*reach_stack) - sum_square((c_stack.^(1/2)).*lam_stack) ...
+                    + sum(2*c_stack.*(reach_init_stack + lam_init_stack).*(reach_stack - reach_init_stack)) ...
+                    + sum(2*c_stack.*(reach_init_stack + lam_init_stack).*(lam_stack - lam_init_stack));
+                
+                % find P(s,s') by summing up over all actions
+                P_s_succ = obs_vector*lambda_matrix'*gen_matrix';
+                
             else
                 P_s_succ = [];
-                stack_cons_reach = 0;
-                stack_cons_entr = 0;
+                %                 stack_cons_reach = 0;
+                %                 stack_cons_entr = 0;
+                convexified_reach_stack = 0;
+                convexified_entropy_stack = 0;
             end
             
             % add P(s,s') to entropy vector
@@ -113,11 +151,14 @@ for s=1:size(TF,1) % To keep track of memory shifts, we use original TF
             
             % Reachability constraint eta(s)<= \sum_s' P(s,s')eta (s')
             % where P(s,s')=\sum_a P(s,a',s')lambda(q,a)
-            eta(state_counter)+stack_cons_reach-target_successor_stack<=slack_2(state_counter);
-            V(state_counter)+stack_cons_entr-log2(exp(1))*sum(entr(entr_vec))<= slack_1(state_counter);
+            %             eta(state_counter)+stack_cons_reach-target_successor_stack<=slack_2(state_counter);
+            %             V(state_counter)+stack_cons_entr-log2(exp(1))*sum(entr(entr_vec))<= slack_1(state_counter);
+            eta(state_counter) - sum(convexified_reach_stack) - target_successor_stack <= slack_2(state_counter);
+            V(state_counter) - sum(convexified_entropy_stack) - log2(exp(1))*sum(entr(entr_vec)) <= slack_1(state_counter);
             
             if ismember(state_counter,init_reduced)
-                val = stack_cons_reach;
+                % val = stack_cons_reach;
+                val = sum(convexified_reach_stack);
             end
             
             state_counter=state_counter+1;
@@ -169,6 +210,5 @@ disp(val)
 %  disp(dot(lambda(2,:),cost(4,:)));
 
 toc;
-disp(toc-tic)
 
 end
